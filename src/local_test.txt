@@ -1,0 +1,3 @@
+python runner.py \
+  --s3-input-path s3://braingeneers/personal/dani/sample_2/ \
+  --s3-output-path s3://braingeneers/personal/dani/sample_2_output/

@@ -1,0 +1,117 @@
+# .gitlab-ci.yml
+stages:
+  - build
+  - deploy
+
+variables:
+  IMAGE_NAME: $CI_REGISTRY_IMAGE
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+
+# Build and push Docker image
+build:
+  stage: build
+  image: docker:24.0.7
+  services:
+    - docker:24.0.7-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - cd docker
+    - docker build -f Dockerfile -t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:latest ..
+    - docker push $IMAGE_NAME:$IMAGE_TAG
+    - docker push $IMAGE_NAME:latest
+    - echo "Image pushed: $IMAGE_NAME:$IMAGE_TAG"
+  only:
+    - main
+    - master
+    - tags
+
+# Generate Kubernetes manifest
+generate-manifest:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - |
+      cat > k8s/planar-waves-job.yaml << EOF
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: planar-waves-${CI_COMMIT_SHORT_SHA}
+        namespace: YOUR_NAMESPACE
+      spec:
+        backoffLimit: 0
+        template:
+          spec:
+            containers:
+            - name: planar-waves
+              image: ${IMAGE_NAME}:${IMAGE_TAG}
+              imagePullPolicy: Always
+              command:
+              - /bin/bash
+              - -c
+              - |
+                # Set environment variables (similar to primus1)
+                export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+                export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+                export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32
+                
+                # Run the analysis
+                cd /workspace
+                python /workspace/src/run_analysis.py
+              resources:
+                requests:
+                  cpu: "4"
+                  memory: "16Gi"
+                  nvidia.com/gpu: 1
+                limits:
+                  cpu: "8"
+                  memory: "32Gi"
+                  nvidia.com/gpu: 1
+              volumeMounts:
+              - name: output-volume
+                mountPath: /workspace/output
+              - name: prp-s3-credentials
+                mountPath: "/root/.aws/credentials"
+                subPath: "credentials"
+              - name: shm-volume
+                mountPath: /dev/shm
+            tolerations:
+            - key: "nvidia.com/gpu"
+              operator: "Exists"
+              effect: "PreferNoSchedule"
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                  - matchExpressions:
+                    - key: nvidia.com/gpu.product
+                      operator: In
+                      values:
+                      - NVIDIA-A10
+                      - NVIDIA-GeForce-RTX-3090
+            restartPolicy: Never
+            imagePullSecrets:
+            - name: gitlab-registry
+            volumes:
+            - name: output-volume
+              persistentVolumeClaim:
+                claimName: planar-waves-output-pvc
+            - name: prp-s3-credentials
+              secret:
+                secretName: prp-s3-credentials
+                defaultMode: 256
+            - name: shm-volume
+              emptyDir:
+                medium: Memory
+                sizeLimit: 8Gi
+      EOF
+    - echo "Kubernetes manifest generated"
+  artifacts:
+    paths:
+      - k8s/planar-waves-job.yaml
+    expire_in: 1 week
+  only:
+    - main
+    - master

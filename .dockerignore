@@ -1,0 +1,26 @@
+# .dockerignore
+*.pyc
+__pycache__
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.git
+.gitignore
+README.md
+.gitlab-ci.yml
+k8s/
+*.h5
+*.npz
+*.zip
+*.mat
+data/
+results/
+output/
+.DS_Store
+*.swp
+*.log
+.vscode/
+.idea/
