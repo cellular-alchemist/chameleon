@@ -8,14 +8,23 @@ variables:
   REGISTRY_URL: $CI_REGISTRY
   IMAGE_NAME: $CI_REGISTRY_IMAGE/planar-waves
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  # Docker-in-Docker settings
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_VERIFY: 1
+  DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
 
 # Build Docker image
 build:
   stage: build
   image: docker:24.0.7
   services:
-    - docker:24.0.7-dind
+    - name: docker:24.0.7-dind
+      alias: docker
   before_script:
+    # Wait for Docker to be ready
+    - until docker info; do sleep 1; done
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
     - docker build -f docker/Dockerfile -t $IMAGE_NAME:$IMAGE_TAG .
@@ -31,14 +40,16 @@ build:
 generate-manifest:
   stage: deploy
   image: alpine:latest
+  before_script:
+    - mkdir -p k8s
   script:
     - |
-      cat > k8s/planar-waves-job.yaml << 'EOF'
+      cat > k8s/planar-waves-job.yaml << EOF
       apiVersion: batch/v1
       kind: Job
       metadata:
         name: planar-waves-${CI_COMMIT_SHORT_SHA}
-        namespace: YOUR_NAMESPACE
+        namespace: YOUR_NAMESPACE_HERE  # TODO: Replace with your actual namespace
       spec:
         backoffLimit: 0
         template:
@@ -58,9 +69,9 @@ generate-manifest:
                 
                 # Run the analysis
                 cd /workspace
-                python /workspace/src/runner.py \
-                  --s3-input-path s3://braingeneers/INPUT_PATH/ \
-                  --s3-output-path s3://braingeneers/OUTPUT_PATH/
+                python /workspace/src/runner.py \\
+                  --s3-input-path s3://braingeneers/personal/dani/sample_2/ \\
+                  --s3-output-path s3://braingeneers/personal/dani/sample_2_output/
               resources:
                 requests:
                   cpu: "4"
@@ -108,9 +119,8 @@ generate-manifest:
                 medium: Memory
                 sizeLimit: 8Gi
       EOF
-    - echo "Kubernetes manifest generated"
-    - mkdir -p k8s
-    - ls -la k8s/
+    - echo "Kubernetes manifest generated with image: ${IMAGE_NAME}:${IMAGE_TAG}"
+    - cat k8s/planar-waves-job.yaml | head -20  # Debug: show first 20 lines
   artifacts:
     paths:
       - k8s/planar-waves-job.yaml
