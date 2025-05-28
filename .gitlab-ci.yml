@@ -23,7 +23,6 @@ build:
     - name: docker:24.0.7-dind
       alias: docker
   before_script:
-    # Wait for Docker to be ready
     - until docker info; do sleep 1; done
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
@@ -43,13 +42,14 @@ generate-manifest:
   before_script:
     - mkdir -p k8s
   script:
+    - echo "Generating Kubernetes manifest..."
     - |
       cat > k8s/planar-waves-job.yaml << EOF
       apiVersion: batch/v1
       kind: Job
       metadata:
         name: planar-waves-${CI_COMMIT_SHORT_SHA}
-        namespace: braingeneers  # TODO: Replace with your actual namespace
+        namespace: braingeneers
       spec:
         backoffLimit: 0
         template:
@@ -58,20 +58,14 @@ generate-manifest:
             - name: planar-waves
               image: ${IMAGE_NAME}:${IMAGE_TAG}
               imagePullPolicy: Always
-              command:
-              - /bin/bash
-              - -c
-              - |
-                # Set environment variables
-                export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
-                export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
-                export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32
-                
-                # Run the analysis
-                cd /workspace
-                python /workspace/src/runner.py \\
-                  --s3-input-path s3://braingeneers/personal/dani/sample_2/ \\
-                  --s3-output-path s3://braingeneers/personal/dani/sample_2_output/
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+                  export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+                  export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32
+                  cd /workspace
+                  python /workspace/src/runner.py --s3-input-path s3://braingeneers/personal/dani/sample_2/ --s3-output-path s3://braingeneers/personal/dani/sample_2_output/
               resources:
                 requests:
                   cpu: "4"
@@ -119,8 +113,7 @@ generate-manifest:
                 medium: Memory
                 sizeLimit: 8Gi
       EOF
-    - echo "Kubernetes manifest generated with image: ${IMAGE_NAME}:${IMAGE_TAG}"
-    - cat k8s/planar-waves-job.yaml | head -20  # Debug: show first 20 lines
+    - echo "Manifest generated successfully"
   artifacts:
     paths:
       - k8s/planar-waves-job.yaml
