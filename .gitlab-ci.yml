@@ -8,25 +8,34 @@ variables:
   REGISTRY_URL: $CI_REGISTRY
   IMAGE_NAME: $CI_REGISTRY_IMAGE/planar-waves
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
-  # Docker-in-Docker settings - DISABLE TLS
-  DOCKER_DRIVER: overlay2
-  DOCKER_TLS_CERTDIR: ""  # Empty string disables TLS
-  DOCKER_HOST: tcp://docker:2375  # Use non-TLS port
 
-# Build Docker image
+# Build Docker image using Kaniko (no Docker daemon needed!)
 build:
   stage: build
-  image: docker:24.0.7
-  services:
-    - docker:24.0.7-dind
-  before_script:
-    - until docker info; do sleep 1; done
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  image:
+    name: gcr.io/kaniko-project/executor:v1.19.0-debug
+    entrypoint: [""]
   script:
-    - docker build -f docker/Dockerfile -t $IMAGE_NAME:$IMAGE_TAG .
-    - docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
-    - docker push $IMAGE_NAME:$IMAGE_TAG
-    - docker push $IMAGE_NAME:latest
+    - echo "Building with Kaniko..."
+    - mkdir -p /kaniko/.docker
+    - |
+      cat > /kaniko/.docker/config.json << EOF
+      {
+        "auths": {
+          "$CI_REGISTRY": {
+            "username": "$CI_REGISTRY_USER",
+            "password": "$CI_REGISTRY_PASSWORD"
+          }
+        }
+      }
+      EOF
+    - /kaniko/executor
+      --context $CI_PROJECT_DIR
+      --dockerfile $CI_PROJECT_DIR/docker/Dockerfile
+      --destination $IMAGE_NAME:$IMAGE_TAG
+      --destination $IMAGE_NAME:latest
+      --cache=true
+      --cache-ttl=24h
   only:
     - main
     - master
