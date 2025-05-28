@@ -4,29 +4,28 @@ stages:
   - deploy
 
 variables:
-  IMAGE_NAME: $CI_REGISTRY_IMAGE
+  # GitLab Container Registry URL
+  REGISTRY_URL: $CI_REGISTRY
+  IMAGE_NAME: $CI_REGISTRY_IMAGE/planar-waves
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
 
-# Build and push Docker image
+# Build Docker image
 build:
   stage: build
   image: docker:24.0.7
   services:
     - docker:24.0.7-dind
-  variables:
-    DOCKER_TLS_CERTDIR: "/certs"
   before_script:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
-    - cd docker
-    - docker build -f Dockerfile -t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:latest ..
+    - docker build -f docker/Dockerfile -t $IMAGE_NAME:$IMAGE_TAG .
+    - docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
     - docker push $IMAGE_NAME:$IMAGE_TAG
     - docker push $IMAGE_NAME:latest
-    - echo "Image pushed: $IMAGE_NAME:$IMAGE_TAG"
   only:
     - main
     - master
-    - tags
+    - development
 
 # Generate Kubernetes manifest
 generate-manifest:
@@ -34,7 +33,7 @@ generate-manifest:
   image: alpine:latest
   script:
     - |
-      cat > k8s/planar-waves-job.yaml << EOF
+      cat > k8s/planar-waves-job.yaml << 'EOF'
       apiVersion: batch/v1
       kind: Job
       metadata:
@@ -52,14 +51,16 @@ generate-manifest:
               - /bin/bash
               - -c
               - |
-                # Set environment variables (similar to primus1)
+                # Set environment variables
                 export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
                 export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
                 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32
                 
                 # Run the analysis
                 cd /workspace
-                python /workspace/src/run_analysis.py
+                python /workspace/src/runner.py \
+                  --s3-input-path s3://braingeneers/INPUT_PATH/ \
+                  --s3-output-path s3://braingeneers/OUTPUT_PATH/
               resources:
                 requests:
                   cpu: "4"
@@ -108,6 +109,8 @@ generate-manifest:
                 sizeLimit: 8Gi
       EOF
     - echo "Kubernetes manifest generated"
+    - mkdir -p k8s
+    - ls -la k8s/
   artifacts:
     paths:
       - k8s/planar-waves-job.yaml
