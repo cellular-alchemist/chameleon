@@ -6,8 +6,8 @@ ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     TZ=UTC
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies (REMOVED ffmpeg)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
     python3.10-dev \
     python3-pip \
@@ -16,13 +16,13 @@ RUN apt-get update && apt-get install -y \
     libopenblas-dev \
     liblapack-dev \
     gfortran \
-    ffmpeg \
     git \
     wget \
     curl \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symbolic links (force overwrite if they exist)
+# Create symbolic links
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
     ln -sf /usr/bin/pip3 /usr/bin/pip
 
