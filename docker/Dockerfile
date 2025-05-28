@@ -1,4 +1,4 @@
-# Dockerfile
+# docker/Dockerfile
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ENV PYTHONUNBUFFERED=1 \
@@ -22,28 +22,36 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symbolic links
-RUN ln -s /usr/bin/python3.10 /usr/bin/python && \
-    ln -s /usr/bin/pip3 /usr/bin/pip
+# Create symbolic links (force overwrite if they exist)
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/bin/pip
 
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install Python packages
-COPY requirements.txt /tmp/
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
-
 # Create working directory
-WORKDIR /app
+WORKDIR /workspace
+RUN mkdir -p /workspace/src /workspace/data /workspace/output
+
+# Copy requirements file
+COPY docker/requirements.txt /workspace/requirements.txt
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r /workspace/requirements.txt
+
+# Install braingeneers and setup HDF5 plugin
+RUN pip install --no-cache-dir braingeneers && \
+    mkdir -p /usr/local/hdf5/lib/plugin && \
+    python -c "import braingeneers; import os; plugin_path = os.path.join(os.path.dirname(braingeneers.__file__), 'data', 'mxw_h5_plugin', 'Linux', 'libcompression.so'); os.system(f'cp {plugin_path} /usr/local/hdf5/lib/plugin/')" || echo "HDF5 plugin setup skipped"
+
+# Set HDF5 plugin path
+ENV HDF5_PLUGIN_PATH=/usr/local/hdf5/lib/plugin
 
 # Copy source code
-COPY src/ /app/src/
+COPY src/ /workspace/src/
 
-# Add src to Python path
-ENV PYTHONPATH="${PYTHONPATH}:/app/src"
-
-# Create data and results directories
-RUN mkdir -p /app/data /app/results
+# Set Python path
+ENV PYTHONPATH=/workspace/src:$PYTHONPATH
 
 # Default command
-CMD ["python", "/app/src/planar_waves_and_ripples.py"]
+CMD ["python", "/workspace/src/runner.py"]
