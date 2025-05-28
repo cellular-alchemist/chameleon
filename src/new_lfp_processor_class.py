@@ -5,23 +5,22 @@ from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, FFMpegWriter
 import os
-from sklearn.preprocessing import KBinsDiscretizer
-from matplotlib import gridspec
-from scipy.stats import entropy
-from scipy.spatial.distance import cdist
-import networkx as nx
-import matplotlib.pyplot as plt
-from sklearn.neighbors import KernelDensity
-import pickle
-import cupy as cp 
-import tqdm.auto as tqdm
 import time
-#from tensorpac import Pac
-import warnings
+import pickle
+import networkx as nx
+try:
+    import cupy as cp
+except ImportError:
+    cp = None
+try:
+    import tqdm
+except ImportError:
+    tqdm = None
+import sys
 from typing import Tuple, Optional, Union, Dict, Any
-from cmcrameri import cm as cmc
 from scipy.spatial import cKDTree
 from matplotlib.colors import LinearSegmentedColormap
+import cmcrameri.cm as cmc
 
 N = 256
 romaO = cmc.romaO
