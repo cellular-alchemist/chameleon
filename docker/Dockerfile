@@ -56,9 +56,19 @@ RUN mkdir -p /workspace/src /workspace/data /workspace/output
 COPY src/ /workspace/src/
 ENV PYTHONPATH=/workspace/src:$PYTHONPATH
 
-# Setup HDF5 plugin if braingeneers is installed
-RUN mkdir -p /usr/local/hdf5/lib/plugin && \
-    python -c "try:\n    import braingeneers\n    import os\n    import shutil\n    plugin_path = os.path.join(os.path.dirname(braingeneers.__file__), 'data', 'mxw_h5_plugin', 'Linux', 'libcompression.so')\n    if os.path.exists(plugin_path):\n        shutil.copy(plugin_path, '/usr/local/hdf5/lib/plugin/')\nexcept:\n    pass" || true
+# Setup HDF5 plugin if braingeneers is installed - FIXED VERSION
+RUN mkdir -p /usr/local/hdf5/lib/plugin
+RUN python -c "\
+import sys; \
+try: \
+    import braingeneers, os, shutil; \
+    plugin_path = os.path.join(os.path.dirname(braingeneers.__file__), 'data', 'mxw_h5_plugin', 'Linux', 'libcompression.so'); \
+    shutil.copy(plugin_path, '/usr/local/hdf5/lib/plugin/') if os.path.exists(plugin_path) else None; \
+    print('HDF5 plugin setup completed') \
+except Exception as e: \
+    print(f'HDF5 plugin setup skipped: {e}'); \
+    sys.exit(0) \
+"
 
 ENV HDF5_PLUGIN_PATH=/usr/local/hdf5/lib/plugin
 
