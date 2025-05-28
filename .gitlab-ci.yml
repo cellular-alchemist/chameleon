@@ -49,7 +49,7 @@ generate-manifest:
       kind: Job
       metadata:
         name: planar-waves-${CI_COMMIT_SHORT_SHA}
-        namespace: YOUR_NAMESPACE_HERE  # TODO: Replace with your actual namespace
+        namespace: braingeneers  # TODO: Replace with your actual namespace
       spec:
         backoffLimit: 0
         template:
