@@ -1,4 +1,24 @@
 # docker/Dockerfile
+
+# Stage 1: Build dependencies
+FROM python:3.10-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gfortran \
+    libhdf5-dev \
+    libopenblas-dev \
+    liblapack-dev \
+    git \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python packages
+COPY docker/requirements.txt /tmp/requirements.txt
+RUN pip install --user --no-cache-dir -r /tmp/requirements.txt
+
+# Stage 2: Runtime image with CUDA
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ENV PYTHONUNBUFFERED=1 \
@@ -6,52 +26,40 @@ ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     TZ=UTC
 
-# Install system dependencies (REMOVED ffmpeg)
+# Install only runtime dependencies (no dev packages)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
-    python3.10-dev \
-    python3-pip \
-    build-essential \
-    libhdf5-dev \
-    libopenblas-dev \
-    liblapack-dev \
-    gfortran \
-    git \
-    wget \
+    python3-distutils \
+    libhdf5-103 \
+    libopenblas0 \
+    libgfortran5 \
+    libgomp1 \
     curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symbolic links
-RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
-    ln -sf /usr/bin/pip3 /usr/bin/pip
+# Create symbolic link for python
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python
 
-# Upgrade pip
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# Copy Python packages from builder
+COPY --from=builder /root/.local /root/.local
+
+# Update PATH and PYTHONPATH
+ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONPATH=/root/.local/lib/python3.10/site-packages:$PYTHONPATH
 
 # Create working directory
 WORKDIR /workspace
 RUN mkdir -p /workspace/src /workspace/data /workspace/output
 
-# Copy requirements file
-COPY docker/requirements.txt /workspace/requirements.txt
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r /workspace/requirements.txt
-
-# Install braingeneers and setup HDF5 plugin
-RUN pip install --no-cache-dir braingeneers && \
-    mkdir -p /usr/local/hdf5/lib/plugin && \
-    python -c "import braingeneers; import os; plugin_path = os.path.join(os.path.dirname(braingeneers.__file__), 'data', 'mxw_h5_plugin', 'Linux', 'libcompression.so'); os.system(f'cp {plugin_path} /usr/local/hdf5/lib/plugin/')" || echo "HDF5 plugin setup skipped"
-
-# Set HDF5 plugin path
-ENV HDF5_PLUGIN_PATH=/usr/local/hdf5/lib/plugin
-
 # Copy source code
 COPY src/ /workspace/src/
-
-# Set Python path
 ENV PYTHONPATH=/workspace/src:$PYTHONPATH
 
-# Default command
+# Setup HDF5 plugin if braingeneers is installed
+RUN mkdir -p /usr/local/hdf5/lib/plugin && \
+    python -c "try:\n    import braingeneers\n    import os\n    import shutil\n    plugin_path = os.path.join(os.path.dirname(braingeneers.__file__), 'data', 'mxw_h5_plugin', 'Linux', 'libcompression.so')\n    if os.path.exists(plugin_path):\n        shutil.copy(plugin_path, '/usr/local/hdf5/lib/plugin/')\nexcept:\n    pass" || true
+
+ENV HDF5_PLUGIN_PATH=/usr/local/hdf5/lib/plugin
+
 CMD ["python", "/workspace/src/runner.py"]
