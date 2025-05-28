@@ -8,20 +8,17 @@ variables:
   REGISTRY_URL: $CI_REGISTRY
   IMAGE_NAME: $CI_REGISTRY_IMAGE/planar-waves
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
-  # Docker-in-Docker settings
+  # Docker-in-Docker settings - DISABLE TLS
   DOCKER_DRIVER: overlay2
-  DOCKER_TLS_CERTDIR: "/certs"
-  DOCKER_HOST: tcp://docker:2376
-  DOCKER_TLS_VERIFY: 1
-  DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+  DOCKER_TLS_CERTDIR: ""  # Empty string disables TLS
+  DOCKER_HOST: tcp://docker:2375  # Use non-TLS port
 
 # Build Docker image
 build:
   stage: build
   image: docker:24.0.7
   services:
-    - name: docker:24.0.7-dind
-      alias: docker
+    - docker:24.0.7-dind
   before_script:
     - until docker info; do sleep 1; done
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
