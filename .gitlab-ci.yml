@@ -54,7 +54,7 @@ generate-manifest:
       apiVersion: batch/v1
       kind: Job
       metadata:
-        name: planar-waves-${CI_COMMIT_SHORT_SHA}
+        name: ceres-${CI_COMMIT_SHORT_SHA}
         namespace: braingeneers
       spec:
         backoffLimit: 0
@@ -71,7 +71,7 @@ generate-manifest:
                   export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
                   export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32
                   cd /workspace
-                  python /workspace/src/runner.py --s3-input-path s3://braingeneers/personal/dani/sample_2/ --s3-output-path s3://braingeneers/personal/dani/sample_2_output/
+                  python /workspace/src/runner.py s3://braingeneers/personal/dani/dvorakian_study/experiment_config.yml
               resources:
                 requests:
                   cpu: "4"
@@ -109,7 +109,7 @@ generate-manifest:
             volumes:
             - name: output-volume
               persistentVolumeClaim:
-                claimName: planar-waves-output-pvc
+                claimName: demeter-output-pvc
             - name: prp-s3-credentials
               secret:
                 secretName: prp-s3-credentials

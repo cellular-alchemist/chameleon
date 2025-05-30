@@ -11,6 +11,7 @@ from typing import Dict, List, Tuple, Optional, Union
 import functools
 import pickle
 from pathlib import Path
+import gc
 
 # ============================================================================
 # CORE DATA STRUCTURES
@@ -424,58 +425,99 @@ class UnifiedEventDetector:
     
     def _compute_pgd_for_band(self, band_name: str, window_start: int, 
                             window_length: int, grad_calc: UnifiedGradientCalculator) -> Dict:
-        """Compute PGD for a frequency band"""
-        # Get analytical data
-        analytical_data = self.processor._get_analytical_data(
-            band_name, window_start, window_start + window_length
-        )
-        phase_data = analytical_data['phase']
+        """Compute PGD for a frequency band using streaming/chunked processing"""
         
-        # Downsample if needed
-        if self.config.pgd_downsample_factor > 1:
-            indices = np.arange(0, phase_data.shape[1], self.config.pgd_downsample_factor)
-            phase_data_downsampled = phase_data[:, indices]
-        else:
-            phase_data_downsampled = phase_data
-            indices = np.arange(phase_data.shape[1])
+        # Define chunk size based on available memory
+        # Process 10 seconds of data at a time (at 20kHz = 200k samples)
+        chunk_samples = min(200000, window_length)
+        n_chunks = (window_length + chunk_samples - 1) // chunk_samples
         
-        # Compute gradients in batches
-        n_timepoints = phase_data_downsampled.shape[1]
-        n_batches = (n_timepoints + self.config.pgd_batch_size - 1) // self.config.pgd_batch_size
+        print(f"Processing {band_name} PGD in {n_chunks} chunks of {chunk_samples} samples")
         
-        pgd_values = np.zeros(n_timepoints, dtype=np.float32)
+        # Pre-allocate output arrays
+        total_downsampled_points = window_length // self.config.pgd_downsample_factor
+        pgd_values = np.zeros(total_downsampled_points, dtype=np.float32)
+        time_points = np.zeros(total_downsampled_points, dtype=np.float32)
         
-        for batch_idx in range(n_batches):
-            start_idx = batch_idx * self.config.pgd_batch_size
-            end_idx = min(start_idx + self.config.pgd_batch_size, n_timepoints)
+        # Keep track of output position
+        output_idx = 0
+        
+        # Process each chunk
+        for chunk_idx in range(n_chunks):
+            chunk_start = chunk_idx * chunk_samples
+            chunk_end = min((chunk_idx + 1) * chunk_samples, window_length)
+            chunk_size = chunk_end - chunk_start
             
-            # Get batch data
-            phase_batch = phase_data_downsampled[:, start_idx:end_idx]
+            if chunk_size <= 0:
+                continue
+                
+            print(f"  Processing chunk {chunk_idx+1}/{n_chunks} ({chunk_start}-{chunk_end})")
             
-            # Compute gradients
-            grad_x, grad_y = grad_calc.compute_gradients_batch(phase_batch)
+            # Get analytical data for just this chunk
+            chunk_analytical = self.processor._get_analytical_data(
+                band_name, 
+                window_start + chunk_start, 
+                window_start + chunk_end
+            )
+            chunk_phase = chunk_analytical['phase']
             
-            # Compute PGD
-            pgd_batch = grad_calc.compute_pgd_values(grad_x, grad_y)
-            pgd_values[start_idx:end_idx] = pgd_batch
+            # Downsample indices for this chunk
+            chunk_indices = np.arange(0, chunk_size, self.config.pgd_downsample_factor)
+            chunk_pgd_values = np.zeros(len(chunk_indices), dtype=np.float32)
+            
+            # Process in batches within the chunk
+            n_timepoints = len(chunk_indices)
+            n_batches = (n_timepoints + self.config.pgd_batch_size - 1) // self.config.pgd_batch_size
+            
+            for batch_idx in range(n_batches):
+                batch_start_idx = batch_idx * self.config.pgd_batch_size
+                batch_end_idx = min(batch_start_idx + self.config.pgd_batch_size, n_timepoints)
+                
+                # Get batch indices relative to chunk
+                batch_indices = chunk_indices[batch_start_idx:batch_end_idx]
+                phase_batch = chunk_phase[:, batch_indices]
+                
+                # Compute gradients
+                grad_x, grad_y = grad_calc.compute_gradients_batch(phase_batch)
+                
+                # Compute PGD
+                pgd_batch = grad_calc.compute_pgd_values(grad_x, grad_y)
+                chunk_pgd_values[batch_start_idx:batch_end_idx] = pgd_batch
+            
+            # Store results in output arrays
+            n_chunk_points = len(chunk_indices)
+            pgd_values[output_idx:output_idx + n_chunk_points] = chunk_pgd_values
+            
+            # Calculate time points for this chunk
+            chunk_time_points = (window_start + chunk_start + chunk_indices) / self.fs
+            time_points[output_idx:output_idx + n_chunk_points] = chunk_time_points
+            
+            output_idx += n_chunk_points
+            
+            # Free memory from this chunk
+            del chunk_analytical
+            del chunk_phase
+            del chunk_pgd_values
+            gc.collect()
+        
+        # Trim arrays to actual size (in case of rounding)
+        pgd_values = pgd_values[:output_idx]
+        time_points = time_points[:output_idx]
         
         # Smooth PGD values
         from scipy.ndimage import gaussian_filter1d
         pgd_smooth = gaussian_filter1d(pgd_values, sigma=self.config.pgd_smoothing_sigma)
         
-        # Create time points
-        time_points = (window_start + indices) / self.fs
-        
+        # Return results without storing full phase data
         return {
             'time_points': time_points,
             'pgd_raw': pgd_values,
             'pgd_smooth': pgd_smooth,
-            'phase_data': phase_data,
-            'analytical_data': analytical_data,
             'grad_calc': grad_calc,
             'window_start': window_start,
             'window_end': window_start + window_length,
-            'downsample_factor': self.config.pgd_downsample_factor
+            'downsample_factor': self.config.pgd_downsample_factor,
+            # Don't store phase_data or analytical_data to save memory!
         }
     
     def _detect_pgd_peaks(self, pgd_data: Dict, band_name: str) -> Dict:
