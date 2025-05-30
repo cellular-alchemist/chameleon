@@ -445,32 +445,37 @@ class UnifiedPipelineProcessor:
             )
     
     def _determine_window_params(self, processor: LFPDataProcessor) -> Dict[str, int]:
-        """Determine analysis window parameters"""
-        # Check if window params are specified in config
-        window_config = self.experiment.config.get('processing', {}).get('window', {})
-        
-        if 'start' in window_config and 'length' in window_config:
-            return {
-                'start': window_config['start'],
-                'length': window_config['length']
-            }
-        
-        # Otherwise, analyze entire recording
-        if 'lfp' in processor.waves:
-            n_samples = processor.waves['lfp'].shape[1]
-        else:
-            # Use any available wave data
-            for key, data in processor.waves.items():
-                if hasattr(data, 'shape') and len(data.shape) >= 2:
-                    n_samples = data.shape[1]
-                    break
-            else:
-                raise ValueError("Could not determine recording length")
-        
-        return {
-            'start': 0,
-            'length': n_samples
-        }
+     """Determine analysis window parameters"""
+     # Check if window params are specified in config
+     processing_config = self.experiment.config.get('processing', {})
+     if processing_config:
+         window_config = processing_config.get('window', {})
+     else:
+         window_config = {}
+     
+     # Check if both start and length are provided
+     if window_config and 'start' in window_config and 'length' in window_config:
+         return {
+             'start': window_config['start'],
+             'length': window_config['length']
+         }
+     
+     # Otherwise, analyze entire recording
+     if 'lfp' in processor.waves:
+         n_samples = processor.waves['lfp'].shape[1]
+     else:
+         # Use any available wave data
+         for key, data in processor.waves.items():
+             if hasattr(data, 'shape') and len(data.shape) >= 2:
+                 n_samples = data.shape[1]
+                 break
+         else:
+             raise ValueError("Could not determine recording length")
+     
+     return {
+         'start': 0,
+         'length': n_samples
+     }
     
     def _save_condition_metadata(self, output_dir: Path, sample: Sample, 
                                condition: Condition, window_params: Dict,

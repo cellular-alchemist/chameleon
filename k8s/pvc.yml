@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name:  ceres2-output-pvc
+  name:  ceres3-output-pvc
   namespace: braingeneers
 spec:
   accessModes:
