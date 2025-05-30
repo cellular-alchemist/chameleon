@@ -89,11 +89,15 @@ class S3Handler:
         self.region_name = region_name
         self.max_retries = max_retries
         
-        # Initialize S3 client with retry configuration
+        # Initialize S3 client with retry configuration and s3v4 signature
         from botocore.config import Config
         config = Config(
+            signature_version='s3v4',  # CRITICAL: Required for custom S3 endpoints
             region_name=region_name,
-            retries={'max_attempts': max_retries, 'mode': 'adaptive'}
+            retries={'max_attempts': max_retries, 'mode': 'adaptive'},
+            connect_timeout=60,
+            read_timeout=300,
+            max_pool_connections=20
         )
         
         if endpoint_url:
@@ -816,7 +820,7 @@ def main():
     
     parser.add_argument(
         '--endpoint-url',
-        default=None,
+        default='https://s3.braingeneers.gi.ucsc.edu',
         help='S3 endpoint URL (for custom S3 implementations)'
     )
     
