@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Runner script for planar waves and ripples analysis
+Runner script for unified traveling waves analysis pipeline
 Processes multiple samples from S3 with organized folder structure
+Includes planar waves, ripples, and spectral coherence analysis
 """
 import os
 import sys
@@ -12,6 +13,7 @@ import numpy as np
 from datetime import datetime
 import traceback
 from pathlib import Path
+import json
 
 # Configure matplotlib for headless environment BEFORE any imports
 import matplotlib
@@ -24,7 +26,10 @@ sys.path.append('/workspace/src')
 # Import your modules
 from loaders import load_curation, load_info_maxwell
 from new_lfp_processor_class import LFPDataProcessor
-import planar_waves_and_ripples as pwr
+from spectral_coherence_and_directionality import (
+    WaveAnalysisConfig, 
+    run_unified_analysis
+)
 
 class S3DataHandler:
     """Handle S3 operations for data download and upload"""
@@ -123,15 +128,15 @@ class S3DataHandler:
             print(f"  Error uploading {local_path}: {e}")
             return False
 
-def run_analysis_for_sample(uuid, raw_path, spike_path, lfp_path, output_dir):
+def run_analysis_for_sample(uuid, raw_path, spike_path, lfp_path, output_dir, config):
     """
-    Run the planar waves and ripples analysis for a single sample
+    Run the unified traveling waves analysis for a single sample
     
     Returns:
         bool: True if successful, False otherwise
     """
     print(f"\n{'='*60}")
-    print(f"Running analysis for sample: {uuid}")
+    print(f"Running unified analysis for sample: {uuid}")
     print(f"{'='*60}")
     
     try:
@@ -139,12 +144,11 @@ def run_analysis_for_sample(uuid, raw_path, spike_path, lfp_path, output_dir):
         sample_output_dir = os.path.join(output_dir, uuid)
         os.makedirs(sample_output_dir, exist_ok=True)
         
-        # Note: We do NOT change directory here anymore
         print(f"Output directory: {sample_output_dir}")
         
         # Load data
         print("Loading curation data...")
-        train, neuron_data, config, fs = load_curation(spike_path)
+        train, neuron_data, config_dict, fs = load_curation(spike_path)
         train = [np.array(t)*1000 for t in train]
         
         print("Loading Maxwell info...")
@@ -185,8 +189,7 @@ def run_analysis_for_sample(uuid, raw_path, spike_path, lfp_path, output_dir):
         
         # Create processor
         print("Initializing LFP processor...")
-        # You'll need to load or create x_mod and y_mod
-        # For now, assuming they're in the waves file or need to be computed
+        # Extract electrode locations
         if 'location' in waves:
             locations = waves['location']
             x_mod = locations[:, 0]
@@ -197,183 +200,95 @@ def run_analysis_for_sample(uuid, raw_path, spike_path, lfp_path, output_dir):
             y_mod = config_df['pos_y'].values
         
         processor = LFPDataProcessor(waves, x_mod, y_mod, config_df)
-        processor.add_frequency_band(1, 30, band_name="sharpWave", use_gpu=True, store_analytical=True)
         
-        print("Computing PGD for Sharp Wave band...")
-        sharp_wave_pgd_data = pwr.compute_pgd_for_window(
-            processor,
-            data_type='sharpWave',
+        # Add required frequency bands for unified analysis
+        print("Adding frequency bands...")
+        processor.add_frequency_band(1, 30, band_name="sharpWave", use_gpu=config.use_gpu, store_analytical=True)
+        processor.add_frequency_band(140, 220, band_name="narrowRipples", use_gpu=config.use_gpu, store_analytical=True)
+        processor.add_frequency_band(80, 250, band_name="broadRipples", use_gpu=config.use_gpu, store_analytical=False)
+        
+        # Run unified analysis
+        print("\nRunning unified traveling waves analysis...")
+        print(f"Configuration:")
+        print(f"  - PGD threshold: {config.pgd_threshold}")
+        print(f"  - Energy threshold: {config.energy_threshold}")
+        print(f"  - Ripple thresholds: {config.ripple_low_threshold}/{config.ripple_high_threshold}")
+        print(f"  - GPU enabled: {config.use_gpu}")
+        print(f"  - Cache enabled: {config.cache_computations}")
+        
+        # Define optogenetic intervals if needed (empty for now, can be loaded from metadata)
+        optogenetic_intervals = []
+        
+        # Run the unified analysis
+        results = run_unified_analysis(
+            lfp_processor=processor,
             window_start=window_start,
             window_length=window_length,
-            smoothing_sigma=20,
-            min_gradient=1e-5,
-            use_gpu=True,
-            batch_size=100,
-            verbose=True  # Changed to True for debugging
+            config=config,
+            optogenetic_intervals=optogenetic_intervals,
+            output_dir=sample_output_dir
         )
         
-        print("Computing PGD for Narrow Ripple band...")
-        narrow_ripple_pgd_data = pwr.compute_pgd_for_window(
-            processor,
-            data_type='narrowRipples',
-            window_start=window_start,
-            window_length=window_length,
-            smoothing_sigma=15,
-            min_gradient=1e-5,
-            use_gpu=True,
-            batch_size=100,
-            verbose=True  # Changed to True for debugging
-        )
-        
-        # Store precomputed PGD data
-        pgd_data_dict = {
-            'sharpWave': sharp_wave_pgd_data,
-            'narrowRipples': narrow_ripple_pgd_data
+        # Save metadata
+        metadata = {
+            'uuid': uuid,
+            'analysis_timestamp': datetime.now().isoformat(),
+            'recording_duration_seconds': recording_duration,
+            'n_samples': int(n_samples),
+            'sampling_rate': float(sampling_rate),
+            'window_start': window_start,
+            'window_length': window_length,
+            'config': {
+                'pgd_threshold': config.pgd_threshold,
+                'energy_threshold': config.energy_threshold,
+                'ripple_low_threshold': config.ripple_low_threshold,
+                'ripple_high_threshold': config.ripple_high_threshold,
+                'pgd_smoothing_sigma': config.pgd_smoothing_sigma,
+                'min_event_duration': config.min_event_duration,
+                'use_gpu': config.use_gpu
+            }
         }
         
-        print("Detecting planar waves...")
-        sharp_wave_pgd = pwr.detect_pgd_peaks_from_precomputed(
-            sharp_wave_pgd_data,
-            threshold=1.4,
-            min_duration=0.1,
-            plot_results=True,
-            save_path=os.path.join(sample_output_dir, f'{uuid}_sharp_wave_pgd_peaks')
-        )
-        
-        narrow_ripple_pgd = pwr.detect_pgd_peaks_from_precomputed(
-            narrow_ripple_pgd_data,
-            threshold=1.5,
-            min_duration=0.05,
-            plot_results=True,
-            save_path=os.path.join(sample_output_dir, f'{uuid}_narrow_ripple_pgd_peaks')
-        )
-        
-        print("Detecting ripple events...")
-        ripple_events = processor.detect_ripples(
-            narrowband_key='narrowRipples',
-            wideband_key='broadRipples',
-            low_threshold=3.5,
-            high_threshold=5,
-            min_duration=20,
-            max_duration=200,
-            min_interval=20,
-            sharp_wave_threshold=3,
-            sharp_wave_band=(0.1, 30),
-            require_sharp_wave=True
-        )
-        
-        print("Running comprehensive analysis...")
-        # Use absolute path for save_dir
-        analysis_save_dir = os.path.join(sample_output_dir, f'{uuid}_planar_wave_analysis')
-        
-        try:
-            results = pwr.analyze_planar_waves_and_ripples_optimized(
-                processor,
-                sharp_wave_pgd,
-                ripple_events,
-                pgd_data_dict,
-                bands=['sharpWave', 'narrowRipples'],
-                window_size=0.5,
-                save_dir=analysis_save_dir,  # Use absolute path
-                smoothing_sigma=15,
-                verbose=True,  # Changed to True for debugging
-                swr_marker='waveform',
-                swr_waveform_window=0.1,
-                swr_waveform_height_scale=0.013,
-                horizontal_scale_factor=0.2,
-            )
-            
-            # Print debug information about generated plots
-            if 'figures' in results:
-                individual_plots = results.get('figures', {}).get('individual', [])
-                print(f"Generated {len(individual_plots)} individual event plots")
-                if os.path.exists(analysis_save_dir):
-                    plot_files = [f for f in os.listdir(analysis_save_dir) if f.endswith('.png') or f.endswith('.svg')]
-                    print(f"Found {len(plot_files)} plot files in {analysis_save_dir}")
-                else:
-                    print(f"Warning: Analysis directory {analysis_save_dir} does not exist!")
-            
-        except Exception as e:
-            print(f"Error in analyze_planar_waves_and_ripples_optimized: {str(e)}")
-            traceback.print_exc()
-            raise
-        
-        print("Visualizing SWR components...")
-        try:
-            swr_result = pwr.visualize_all_swr_components(
-                processor, 
-                ripple_events,
-                time_window=0.3,
-                waveform_smoothing_sigma=0.01,
-                include_waveform=True,
-                save_path=os.path.join(sample_output_dir, f"{uuid}_swr_analysis"),
-            )
-            print(f"Generated {len(swr_result.get('figures', []))} SWR component plots")
-        except Exception as e:
-            print(f"Error in visualize_all_swr_components: {str(e)}")
-            traceback.print_exc()
-            raise
-        
-        print("Creating wave analysis plots...")
-        try:
-            figs, axes, wave_results = pwr.plot_pgd_wave_analysis_optimized(
-                processor,
-                sharp_wave_pgd,
-                sharp_wave_pgd_data,
-                data_type='sharpWave',
-                colormap='cmc.lapaz',
-                save_path_base=os.path.join(sample_output_dir, f'{uuid}_theta_pgd_analysis'),
-                use_joypy=False,
-                fig_width=8,
-                fig_height=8
-            )
-            print(f"Generated {len(figs)} wave analysis plots")
-        except Exception as e:
-            print(f"Error in plot_pgd_wave_analysis_optimized: {str(e)}")
-            traceback.print_exc()
-            raise
-        
-        # Save summary statistics
-        summary_path = os.path.join(sample_output_dir, f'{uuid}_analysis_summary.txt')
-        with open(summary_path, 'w') as f:
-            f.write(f"Analysis Summary for {uuid}\n")
-            f.write(f"{'='*50}\n\n")
-            f.write(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            
-            # Add recording information
-            f.write(f"Recording Information:\n")
-            f.write(f"- Total samples: {n_samples:,}\n")
-            f.write(f"- Sampling rate: {sampling_rate} Hz\n")
-            f.write(f"- Recording duration: {recording_duration:.2f} seconds ({recording_duration/60:.2f} minutes)\n")
-            f.write(f"- Analysis window: {window_start} to {window_length} samples (entire recording)\n\n")
-            
-            if 'report' in results:
-                f.write(results['report'])
-            
-            if 'statistics' in results:
-                f.write("\n\nKey Statistics:\n")
-                f.write(f"- Planar waves with ripples: {results['statistics']['pgd_peaks_with_ripples_pct']:.1f}%\n")
-                f.write(f"- Ripples during planar waves: {results['statistics']['ripples_during_planar_waves_pct']:.1f}%\n")
+        metadata_path = os.path.join(sample_output_dir, 'analysis_metadata.json')
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
         
         # List all files generated
         print("\nGenerated files:")
+        generated_files = []
         for root, dirs, files in os.walk(sample_output_dir):
             for file in files:
                 rel_path = os.path.relpath(os.path.join(root, file), sample_output_dir)
                 print(f"  - {rel_path}")
+                generated_files.append(rel_path)
         
-        print(f"✅ Successfully completed analysis for {uuid}")
+        # Save file list
+        with open(os.path.join(sample_output_dir, 'generated_files.txt'), 'w') as f:
+            f.write('\n'.join(generated_files))
+        
+        print(f"✅ Successfully completed unified analysis for {uuid}")
         print(f"   Processed {recording_duration:.2f} seconds of recording data")
+        print(f"   Generated {len(generated_files)} output files")
         return True
         
     except Exception as e:
         print(f"❌ Error analyzing {uuid}: {str(e)}")
         traceback.print_exc()
+        
+        # Save error log
+        error_log_path = os.path.join(sample_output_dir, 'error_log.txt')
+        with open(error_log_path, 'w') as f:
+            f.write(f"Error analyzing {uuid}\n")
+            f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+            f.write(f"Error: {str(e)}\n\n")
+            f.write("Traceback:\n")
+            f.write(traceback.format_exc())
+        
         return False
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Run planar waves analysis on multiple samples from S3'
+        description='Run unified traveling waves analysis on multiple samples from S3'
     )
     parser.add_argument(
         '--s3-input-path',
@@ -383,7 +298,7 @@ def main():
     parser.add_argument(
         '--s3-output-path',
         required=True,
-        help='S3 path for output (e.g., s3://braingeneers/personal/user/planar-waves-results/)'
+        help='S3 path for output (e.g., s3://braingeneers/personal/user/unified-waves-results/)'
     )
     parser.add_argument(
         '--specific-samples',
@@ -401,7 +316,54 @@ def main():
         help='Local directory for output before uploading to S3'
     )
     
+    # Add configuration parameters
+    parser.add_argument(
+        '--pgd-threshold',
+        type=float,
+        default=1.4,
+        help='Threshold for PGD peak detection (default: 1.4)'
+    )
+    parser.add_argument(
+        '--energy-threshold',
+        type=float,
+        default=1.3,
+        help='Threshold for energy peak detection (default: 1.3)'
+    )
+    parser.add_argument(
+        '--ripple-low-threshold',
+        type=float,
+        default=3.5,
+        help='Low threshold for ripple detection (default: 3.5)'
+    )
+    parser.add_argument(
+        '--ripple-high-threshold',
+        type=float,
+        default=5.0,
+        help='High threshold for ripple detection (default: 5.0)'
+    )
+    parser.add_argument(
+        '--no-gpu',
+        action='store_true',
+        help='Disable GPU usage'
+    )
+    parser.add_argument(
+        '--no-cache',
+        action='store_true',
+        help='Disable computation caching'
+    )
+    
     args = parser.parse_args()
+    
+    # Create analysis configuration
+    config = WaveAnalysisConfig(
+        pgd_threshold=args.pgd_threshold,
+        energy_threshold=args.energy_threshold,
+        ripple_low_threshold=args.ripple_low_threshold,
+        ripple_high_threshold=args.ripple_high_threshold,
+        use_gpu=not args.no_gpu,
+        cache_computations=not args.no_cache,
+        # Keep other defaults from WaveAnalysisConfig
+    )
     
     # Initialize S3 handler
     s3_handler = S3DataHandler()
@@ -423,11 +385,21 @@ def main():
         print("No samples found to process!")
         return
     
+    # Print configuration summary
+    print(f"\nAnalysis Configuration:")
+    print(f"  PGD threshold: {config.pgd_threshold}")
+    print(f"  Energy threshold: {config.energy_threshold}")
+    print(f"  Ripple thresholds: {config.ripple_low_threshold}/{config.ripple_high_threshold}")
+    print(f"  GPU enabled: {config.use_gpu}")
+    print(f"  Caching enabled: {config.cache_computations}")
+    
     # Process each sample
     successful = 0
     failed = 0
+    processing_times = []
     
     for i, uuid in enumerate(samples, 1):
+        start_time = time.time()
         print(f"\n[{i}/{len(samples)}] Processing {uuid}")
         
         # Find files for this sample
@@ -466,7 +438,8 @@ def main():
             local_paths['raw'],
             local_paths['spike'],
             local_paths['lfp'],
-            args.local_output_dir
+            args.local_output_dir,
+            config
         )
         
         if analysis_success:
@@ -480,6 +453,8 @@ def main():
             
             print(f"Uploading results for {uuid}...")
             upload_count = 0
+            upload_start = time.time()
+            
             for root, dirs, files in os.walk(sample_output_dir):
                 for file in files:
                     local_file = os.path.join(root, file)
@@ -487,7 +462,9 @@ def main():
                     s3_key = f"{output_prefix}{relative_path}"
                     if s3_handler.upload_file(local_file, s3_key):
                         upload_count += 1
-            print(f"Uploaded {upload_count} files for {uuid}")
+            
+            upload_time = time.time() - upload_start
+            print(f"Uploaded {upload_count} files for {uuid} in {upload_time:.2f} seconds")
         else:
             failed += 1
         
@@ -495,15 +472,60 @@ def main():
         print(f"Cleaning up temporary files for {uuid}...")
         import shutil
         shutil.rmtree(sample_temp_dir, ignore_errors=True)
+        
+        # Track processing time
+        processing_time = time.time() - start_time
+        processing_times.append(processing_time)
+        print(f"Sample processing time: {processing_time:.2f} seconds")
     
     # Final summary
     print(f"\n{'='*60}")
-    print(f"ANALYSIS COMPLETE")
+    print(f"UNIFIED ANALYSIS PIPELINE COMPLETE")
     print(f"{'='*60}")
     print(f"Total samples: {len(samples)}")
     print(f"Successful: {successful}")
     print(f"Failed: {failed}")
     print(f"Results uploaded to: {args.s3_output_path}")
+    
+    if processing_times:
+        avg_time = np.mean(processing_times)
+        total_time = np.sum(processing_times)
+        print(f"\nProcessing Statistics:")
+        print(f"  Average time per sample: {avg_time:.2f} seconds")
+        print(f"  Total processing time: {total_time:.2f} seconds ({total_time/60:.2f} minutes)")
+    
+    # Save summary report
+    summary_path = os.path.join(args.local_output_dir, 'pipeline_summary.json')
+    summary = {
+        'timestamp': datetime.now().isoformat(),
+        'total_samples': len(samples),
+        'successful': successful,
+        'failed': failed,
+        'input_path': args.s3_input_path,
+        'output_path': args.s3_output_path,
+        'configuration': {
+            'pgd_threshold': config.pgd_threshold,
+            'energy_threshold': config.energy_threshold,
+            'ripple_low_threshold': config.ripple_low_threshold,
+            'ripple_high_threshold': config.ripple_high_threshold,
+            'use_gpu': config.use_gpu,
+            'cache_computations': config.cache_computations
+        },
+        'processing_times': {
+            'average_seconds': float(np.mean(processing_times)) if processing_times else 0,
+            'total_seconds': float(np.sum(processing_times)) if processing_times else 0
+        }
+    }
+    
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    # Upload summary
+    _, output_prefix = s3_handler.parse_s3_path(args.s3_output_path)
+    if not output_prefix.endswith('/'):
+        output_prefix += '/'
+    summary_s3_key = f"{output_prefix}pipeline_summary.json"
+    s3_handler.upload_file(summary_path, summary_s3_key)
 
 if __name__ == "__main__":
     main()
