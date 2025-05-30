@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name:  planar-waves-output-pvc
+  name:  ceres-output-pvc
   namespace: braingeneers
 spec:
   accessModes:
