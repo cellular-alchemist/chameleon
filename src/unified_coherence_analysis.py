@@ -97,7 +97,23 @@ class UnifiedGradientCalculator:
         
         # Cache for frequently used computations
         self._gradient_cache = {}
-        
+    
+    @property
+    def cfg(self) -> dict:
+        """
+        Provide backward compatibility with original RegularizedGradient interface.
+        Returns a dictionary with uppercase keys as expected by plot_pgd_wave_analysis_optimized.
+        """
+        return {
+            'MAX_NEIGHBOR_DIST': self.config.max_neighbor_dist,
+            'SPATIAL_SIGMA': self.config.spatial_sigma,
+            'RIDGE_LAMBDA': self.config.ridge_lambda,
+            'COVERAGE_ANGLE_GAP': self.config.coverage_angle_gap,
+            'MIN_GRADIENT': self.config.min_gradient,
+            'V_MIN': 0.0,  # Default from original WAVE_CONFIG
+            'V_MAX': 300_000.0,  # Default from original WAVE_CONFIG (μm/s)
+        }
+    
     def _precompute_neighbors(self):
         """Precompute neighbor relationships once for all electrodes"""
         from scipy.spatial import cKDTree
@@ -429,7 +445,7 @@ class UnifiedEventDetector:
         
         # Define chunk size based on available memory
         # Process 10 seconds of data at a time (at 20kHz = 200k samples)
-        chunk_samples = min(200000, window_length)
+        chunk_samples = min(40000, window_length)
         n_chunks = (window_length + chunk_samples - 1) // chunk_samples
         
         print(f"Processing {band_name} PGD in {n_chunks} chunks of {chunk_samples} samples")
