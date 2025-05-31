@@ -1837,6 +1837,19 @@ def plot_pgd_wave_analysis_optimized(
     grad_calc = pgd_data['grad_calc']
     config = grad_calc.cfg
     
+    # Get phase data if not in pgd_data (for compatibility with unified pipeline)
+    if 'phase_data' not in pgd_data:
+        # Re-compute phase data from the processor
+        print("Re-computing phase data for spatial analysis...")
+        analytical_data = lfp_processor._get_analytical_data(
+            data_type, 
+            pgd_data['window_start'], 
+            pgd_data['window_end']
+        )
+        phase_data = analytical_data['phase']
+    else:
+        phase_data = pgd_data['phase_data']
+    
     # Calculate speeds and directions for each PGD event
     n_events = len(sharp_wave_pgd['peak_times'])
     
@@ -1852,11 +1865,11 @@ def plot_pgd_wave_analysis_optimized(
         # Convert times to frames relative to precomputed data window
         window_start_frame = pgd_data['window_start']
         start_frame = max(0, int(start_time * fs) - window_start_frame)
-        end_frame = min(pgd_data['phase_data'].shape[1], int(end_time * fs) - window_start_frame)
+        end_frame = min(phase_data.shape[1], int(end_time * fs) - window_start_frame)
         peak_frame = int(peak_time * fs) - window_start_frame
         
-        # Get phase data from precomputed results
-        phases = pgd_data['phase_data'][:, start_frame:end_frame]
+        # Get phase data from the variable (not from pgd_data dict)
+        phases = phase_data[:, start_frame:end_frame]
         
         # Get target frame (corresponding to peak)
         target_frame = min(peak_frame - start_frame, phases.shape[1] - 1)
