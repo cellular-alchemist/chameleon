@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name:  demeter-output-pvc
+  name:  mars-output-pvc
   namespace: braingeneers
 spec:
   accessModes:

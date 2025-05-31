@@ -1,0 +1,67 @@
+experiment:
+  name: "mars"
+  s3_output_base: "s3://braingeneers/personal/dani/mars/"
+  metadata:
+    description: "Traveling waves analysis across baseline, opto, and acid conditions"
+    date: "2024-01-20"
+    investigator: "Dr. Primus"
+
+samples:
+  - name: "sample_001"
+    metadata:
+      age_days: 30
+      culture_type: "brain_slice"
+    conditions:
+      baseline:
+        files:
+          h5: "s3://braingeneers/personal/dani/sample_2/jsh0320/dvorak_3.raw.h5"
+          zip: "s3://braingeneers/personal/dani/sample_2/jsh0320/dvorak_3_acqm.zip"
+          npz: "s3://braingeneers/personal/dani/sample_2/jsh0320/special_bandsdvorak_3_special_bands_20_[0, 120].npz"
+          opto_events: "s3://braingeneers/personal/dani/sample_2/jsh0320/opto_intervals.npy"
+        metadata:
+          recording_duration: 600
+
+config:
+  processing:
+    frequency_bands:
+      - name: "sharpWave"
+        low: 1
+        high: 30
+        store_analytical: true
+      - name: "narrowRipples"
+        low: 150
+        high: 250
+        store_analytical: false
+      - name: "broadRipples"
+        low: 80
+        high: 250
+        store_analytical: false
+    window:
+      # If not specified, will process entire recording
+      start: 14000
+      length: 4000  
+  analysis:
+    # PGD parameters
+    pgd_threshold: 1.4
+    energy_threshold: 1.3
+    pgd_smoothing_sigma: 15
+    
+    # Ripple detection
+    ripple_low_threshold: 3.5
+    ripple_high_threshold: 5.0
+    ripple_min_duration: 20
+    ripple_max_duration: 200
+    
+    # Spectral analysis
+    wavelet_freqs: [1, 150]
+    n_wavelets: 90
+    wavelet_width: 10.0
+    coherence_method: "kl_divergence"
+    
+    # Performance
+    use_gpu: true
+    cache_computations: true
+    
+  cluster:
+    gpu_device: 0
+    cleanup_temp_files: true
