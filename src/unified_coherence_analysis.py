@@ -80,7 +80,6 @@ class ComputationCache:
 # ============================================================================
 # UNIFIED GRADIENT CALCULATOR
 # ============================================================================
-
 class UnifiedGradientCalculator:
     """
     Single gradient calculator used across all analyses
@@ -92,19 +91,8 @@ class UnifiedGradientCalculator:
         self.config = config
         self.n_electrodes = len(locations)
         
-        # Precompute all neighbor relationships once
-        self._precompute_neighbors()
-        
-        # Cache for frequently used computations
-        self._gradient_cache = {}
-    
-    @property
-    def cfg(self) -> dict:
-        """
-        Provide backward compatibility with original RegularizedGradient interface.
-        Returns a dictionary with uppercase keys as expected by plot_pgd_wave_analysis_optimized.
-        """
-        return {
+        # Add cfg as a regular attribute for backward compatibility
+        self.cfg = {
             'MAX_NEIGHBOR_DIST': self.config.max_neighbor_dist,
             'SPATIAL_SIGMA': self.config.spatial_sigma,
             'RIDGE_LAMBDA': self.config.ridge_lambda,
@@ -113,6 +101,12 @@ class UnifiedGradientCalculator:
             'V_MIN': 0.0,  # Default from original WAVE_CONFIG
             'V_MAX': 300_000.0,  # Default from original WAVE_CONFIG (μm/s)
         }
+        
+        # Precompute all neighbor relationships once
+        self._precompute_neighbors()
+        
+        # Cache for frequently used computations
+        self._gradient_cache = {}
     
     def _precompute_neighbors(self):
         """Precompute neighbor relationships once for all electrodes"""
@@ -255,7 +249,82 @@ class UnifiedGradientCalculator:
                     pgd_values[t] = np.linalg.norm(mean_grad) / mean_mag
         
         return pgd_values
+    
+    def compute(self, phase_data):
+        """
+        Compute method for backward compatibility with RegularizedGradient.
+        This method is used by the original planar_waves_and_ripples code.
+        """
+        n = len(phase_data)
+        grad_x = np.zeros(n, dtype=np.float64)
+        grad_y = np.zeros(n, dtype=np.float64)
 
+        for i in range(n):
+            if not self.valid_electrodes[i]:
+                continue
+                
+            nbrs = self.neighbor_indices[i]
+            matrix_data = self.neighbor_matrices[i]
+            
+            if matrix_data is None:
+                continue
+            
+            # Phase diff with wrapping
+            phase_diff = phase_data[nbrs] - phase_data[i]
+            diffs = ((phase_diff + np.pi) % (2*np.pi)) - np.pi
+
+            # Use precomputed matrices
+            A = matrix_data['A']
+            ATA_inv = matrix_data['ATA_inv']
+            weights = matrix_data['weights']
+            
+            # Weighted least squares
+            ATb = A.T @ (weights * diffs)
+            g = ATA_inv @ ATb
+            grad_x[i], grad_y[i] = g[0], g[1]
+
+        return grad_x, grad_y
+    
+    def compute_pgd_for_timepoint(self, phase_data):
+        """
+        Compute PGD for a single timepoint.
+        For backward compatibility with RegularizedGradient.
+        """
+        # Compute gradients
+        grad_x, grad_y = self.compute(phase_data)
+        
+        # Calculate gradient magnitudes
+        gradients = np.column_stack((grad_x, grad_y))
+        grad_magnitudes = np.sqrt(np.sum(gradients**2, axis=1))
+        
+        # Mask out invalid gradients
+        valid_mask = grad_magnitudes >= self.config.min_gradient
+        valid_gradients = gradients[valid_mask]
+        valid_magnitudes = grad_magnitudes[valid_mask]
+        
+        if len(valid_gradients) > 0:
+            # Calculate PGD: ||∇φ|| / ||∇φ||
+            mean_gradient = np.mean(valid_gradients, axis=0)
+            mean_gradient_magnitude = np.linalg.norm(mean_gradient)
+            mean_magnitude = np.mean(valid_magnitudes)
+            
+            if mean_magnitude > 0:
+                return mean_gradient_magnitude / mean_magnitude
+        
+        return 0.0
+    
+    def compute_pgd_batch(self, phase_data_batch):
+        """
+        Compute PGD values for a batch of time points.
+        For backward compatibility with RegularizedGradient.
+        """
+        n_timepoints = phase_data_batch.shape[1]
+        pgd_values = np.zeros(n_timepoints, dtype=np.float32)
+        
+        for t in range(n_timepoints):
+            pgd_values[t] = self.compute_pgd_for_timepoint(phase_data_batch[:, t])
+        
+        return pgd_values
 
 # ============================================================================
 # UNIFIED EVENT DETECTOR

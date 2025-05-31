@@ -9,39 +9,33 @@ variables:
   IMAGE_NAME: $CI_REGISTRY_IMAGE/planar-waves
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
 
-# Build Docker image using Kaniko (no Docker daemon needed!)
+# Build Docker image using Kaniko
 build:
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.19.0-debug
+    name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
+  variables:
+    # CRITICAL: This fixes the speed problems on NRP!
+    GODEBUG: "http2client=0"
   script:
     - echo "Building with Kaniko..."
     - mkdir -p /kaniko/.docker
     - |
-      cat > /kaniko/.docker/config.json << EOF
-      {
-        "auths": {
-          "$CI_REGISTRY": {
-            "username": "$CI_REGISTRY_USER",
-            "password": "$CI_REGISTRY_PASSWORD"
-          }
-        }
-      }
-      EOF
-    - /kaniko/executor
-      --context $CI_PROJECT_DIR
-      --dockerfile $CI_PROJECT_DIR/docker/Dockerfile
+      echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n $CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD | base64)\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor 
+      --cache=true 
+      --push-retry=10 
+      --context $CI_PROJECT_DIR 
+      --dockerfile $CI_PROJECT_DIR/docker/Dockerfile 
       --destination $IMAGE_NAME:$IMAGE_TAG
       --destination $IMAGE_NAME:latest
-      --cache=true
-      --cache-ttl=24h
   only:
     - main
     - master
     - development
 
-# Generate Kubernetes manifest
+# Generate Kubernetes manifest (keep your existing configuration)
 generate-manifest:
   stage: deploy
   image: alpine:latest

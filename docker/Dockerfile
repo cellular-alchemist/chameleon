@@ -1,6 +1,5 @@
 # docker/Dockerfile
-
-# Stage 1: Build dependencies
+# Stage 1: Build dependencies (for non-CUDA packages)
 FROM python:3.10-slim AS builder
 
 # Install build dependencies
@@ -14,8 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python packages
-COPY docker/requirements.txt /tmp/requirements.txt
+# Copy and install Python packages (except CuPy)
+COPY docker/requirements-no-cuda.txt /tmp/requirements.txt
 RUN pip install --user --no-cache-dir -r /tmp/requirements.txt
 
 # Stage 2: Runtime image with CUDA
@@ -26,9 +25,10 @@ ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     TZ=UTC
 
-# Install only runtime dependencies (no dev packages)
+# Install runtime dependencies including pip
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
+    python3-pip \
     python3-distutils \
     libhdf5-103 \
     libopenblas0 \
@@ -38,8 +38,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symbolic link for python
+# Create symbolic links
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python
+RUN ln -sf /usr/bin/pip3 /usr/bin/pip
 
 # Copy Python packages from builder
 COPY --from=builder /root/.local /root/.local
@@ -47,6 +48,9 @@ COPY --from=builder /root/.local /root/.local
 # Update PATH and PYTHONPATH
 ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONPATH=/root/.local/lib/python3.10/site-packages:$PYTHONPATH
+
+# Install CuPy in the runtime stage where CUDA is available
+RUN pip install --no-cache-dir cupy-cuda11x>=11.0.0
 
 # Create working directory
 WORKDIR /workspace
@@ -56,7 +60,7 @@ RUN mkdir -p /workspace/src /workspace/data /workspace/output
 COPY src/ /workspace/src/
 ENV PYTHONPATH=/workspace/src:$PYTHONPATH
 
-# Setup HDF5 plugin if braingeneers is installed - FIXED VERSION
+# Setup HDF5 plugin if braingeneers is installed
 RUN mkdir -p /usr/local/hdf5/lib/plugin && \
     python3 -c "import sys; exec('''try:\n    import braingeneers, os, shutil\n    plugin_path = os.path.join(os.path.dirname(braingeneers.__file__), \"data\", \"mxw_h5_plugin\", \"Linux\", \"libcompression.so\")\n    if os.path.exists(plugin_path):\n        shutil.copy(plugin_path, \"/usr/local/hdf5/lib/plugin/\")\n        print(\"HDF5 plugin setup completed\")\n    else:\n        print(\"HDF5 plugin file not found\")\nexcept Exception as e:\n    print(f\"HDF5 plugin setup skipped: {e}\")\n    sys.exit(0)\n''')"
 
