@@ -694,7 +694,8 @@ class UnifiedWaveAnalysis:
         
     def run_complete_analysis(self, window_start: int, window_length: int,
                             optogenetic_intervals: Optional[List] = None,
-                            analyses_to_run: Optional[List[str]] = None) -> Dict:
+                            analyses_to_run: Optional[List[str]] = None,
+                            output_dir: Optional[Union[str, Path]] = None) -> Dict:
         """
         Run complete analysis pipeline with all optimizations
         
@@ -704,12 +705,17 @@ class UnifiedWaveAnalysis:
             optogenetic_intervals: List of (start, end) times to exclude
             analyses_to_run: List of analyses to perform 
                            ['temporal', 'spectral', 'spatial', 'all']
+            output_dir: Directory to save outputs (including figures)
         
         Returns:
             Dictionary with all results
         """
         if analyses_to_run is None:
             analyses_to_run = ['all']
+        
+        if output_dir:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
         
         print("="*60)
         print("UNIFIED TRAVELING WAVES ANALYSIS PIPELINE")
@@ -726,18 +732,18 @@ class UnifiedWaveAnalysis:
         # Print event summary
         self._print_event_summary()
         
-        # Step 2: Run requested analyses
+        # Step 2: Run requested analyses with output_dir
         if 'all' in analyses_to_run or 'temporal' in analyses_to_run:
             print("\nStep 2: Running temporal analysis...")
-            self.analysis_results['temporal'] = self._run_temporal_analysis()
+            self.analysis_results['temporal'] = self._run_temporal_analysis(output_dir)
         
         if 'all' in analyses_to_run or 'spectral' in analyses_to_run:
             print("\nStep 3: Running spectral analysis...")
-            self.analysis_results['spectral'] = self._run_spectral_analysis()
+            self.analysis_results['spectral'] = self._run_spectral_analysis(output_dir)
         
         if 'all' in analyses_to_run or 'spatial' in analyses_to_run:
             print("\nStep 4: Running spatial analysis...")
-            self.analysis_results['spatial'] = self._run_spatial_analysis()
+            self.analysis_results['spatial'] = self._run_spatial_analysis(output_dir)
         
         # Step 3: Generate integrated visualizations
         print("\nStep 5: Generating visualizations...")
@@ -774,7 +780,7 @@ class UnifiedWaveAnalysis:
                        if isinstance(ch, int))
         print(f"  Ripple events: {n_ripples}")
     
-    def _run_temporal_analysis(self) -> Dict:
+    def _run_temporal_analysis(self, output_dir: Optional[Path] = None) -> Dict:
         """
         Analyze temporal relationships between different event types
         """
@@ -792,6 +798,11 @@ class UnifiedWaveAnalysis:
                 for band, events in self.events['pgd_events'].items()
             }
             
+            # Set save_dir if output_dir is provided
+            save_dir = str(output_dir / 'temporal') if output_dir else None
+            if save_dir and output_dir:
+                (output_dir / 'temporal').mkdir(exist_ok=True)
+            
             results['sw_ripple_analysis'] = analyze_planar_waves_and_ripples_optimized(
                 self.processor,
                 sw_pgd,
@@ -800,19 +811,72 @@ class UnifiedWaveAnalysis:
                 bands=['sharpWave', 'narrowRipples'],
                 window_size=0.5,
                 smoothing_sigma=15,
-                plot_individual=False,  # Skip individual plots for efficiency
-                generate_summary=True
+                plot_individual=True,  # Skip individual plots for efficiency
+                generate_summary=True,
+                save_dir=save_dir, # This will save figures
+                swr_marker='waveform',
+                swr_waveform_window=0.1,
+                swr_waveform_height_scale=0.013, # Waveform scaling
+                swr_waveform_smoothing=1.01,  # Waveform smoothing
+                horizontal_scale_factor=0.2,  # Horizontal scaling
+                waveform_colormap='cmc.hawaii'
             )
         
         return results
     
-    def _run_spectral_analysis(self) -> Dict:
+    def _run_spectral_analysis(self, output_dir: Optional[Path] = None) -> Dict:
         """
         Run spectral coherence analysis on detected events
         """
         from spectral_coherence_analysis import plot_coherence_spectral_analysis
         
         results = {}
+        
+        # Create subdirectory for spectral plots
+        if output_dir:
+            spectral_dir = output_dir / 'spectral'
+            spectral_dir.mkdir(exist_ok=True)
+        
+        # Define analysis configurations
+        analysis_configs = [
+            {
+                'name': 'full_spectrum',
+                'params': {
+                    'freq_range': self.config.wavelet_freqs,  # Default (1, 150)
+                    'coherence_method': self.config.coherence_method,
+                    'n_wavelets': self.config.n_wavelets,
+                    'wavelet_width': self.config.wavelet_width,
+                    'smoothing_sigma': 4,
+                    'lpf_cutoff': 170,
+                    'nfft': 4096,
+                    'max_nperseg': 1024,
+                    'overlap_fraction': 0.8,
+                    'scaling_factor': 8,
+                    'detrend_method': 'linear',
+                    'window_type': 'hann',
+                    'figure_size': (20, 15),
+                    'x_left_lim': 2.5
+                }
+            },
+            {
+                'name': 'sharp_wave_band',
+                'params': {
+                    'freq_range': (2, 30),
+                    'coherence_method': 'kl_divergence',
+                    'n_wavelets': 80,
+                    'wavelet_width': 12,
+                    'smoothing_sigma': 3,
+                    'lpf_cutoff': 35,
+                    'nfft': 4096,
+                    'max_nperseg': 2048,
+                    'overlap_fraction': 0.8,
+                    'scaling_factor': 10,
+                    'detrend_method': 'linear',
+                    'window_type': 'hann',
+                    'figure_size': (20, 15)
+                }
+            }
+        ]
         
         # Analyze different event types
         event_groups = [
@@ -826,24 +890,36 @@ class UnifiedWaveAnalysis:
                 # Limit to first 10 events for efficiency
                 intervals_subset = intervals[:10] if len(intervals) > 10 else intervals
                 
-                fig, axes, spectral_results = plot_coherence_spectral_analysis(
-                    self.processor,
-                    intervals_subset,
-                    freq_range=self.config.wavelet_freqs,
-                    coherence_method=self.config.coherence_method,
-                    n_wavelets=self.config.n_wavelets,
-                    wavelet_width=self.config.wavelet_width
-                )
-                
-                results[event_type] = spectral_results
-                
-                # Close figure to save memory
-                import matplotlib.pyplot as plt
-                plt.close(fig)
+                # Run analysis for each configuration
+                for config in analysis_configs:
+                    config_name = config['name']
+                    params = config['params']
+                    
+                    print(f"  Running {config_name} analysis for {event_type} events...")
+                    
+                    # Set save path if output_dir provided
+                    save_path = str(spectral_dir / f'{event_type}_coherence_{config_name}.png') if output_dir else None
+                    
+                    # Run analysis with specific parameters
+                    fig, axes, spectral_results = plot_coherence_spectral_analysis(
+                        self.processor,
+                        intervals_subset,
+                        **params,
+                        save_path=save_path  # This will save both PNG and SVG
+                    )
+                    
+                    # Store results with unique key
+                    results[f'{event_type}_{config_name}'] = spectral_results
+                    
+                    # Close figure to save memory
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
+                    
+                    print(f"    Completed {config_name} analysis for {event_type}")
         
         return results
     
-    def _run_spatial_analysis(self) -> Dict:
+    def _run_spatial_analysis(self, output_dir: Optional[Path] = None) -> Dict:
         """
         Analyze spatial properties of traveling waves
         """
@@ -851,15 +927,24 @@ class UnifiedWaveAnalysis:
         
         results = {}
         
+        # Create subdirectory for spatial plots
+        if output_dir:
+            spatial_dir = output_dir / 'spatial'
+            spatial_dir.mkdir(exist_ok=True)
+        
         # Analyze wave properties for each PGD event type
         for band, events in self.events['pgd_events'].items():
             if len(events['peak_times']) > 0:
+                # Set save path base if output_dir provided
+                save_path_base = str(spatial_dir / f'{band}_wave_analysis') if output_dir else None
+                
                 figs, axes, wave_results = plot_pgd_wave_analysis_optimized(
                     self.processor,
                     events,
                     events['pgd_data'],
                     data_type=band,
-                    use_joypy=False
+                    use_joypy=False,
+                    save_path_base=save_path_base  # This will save all 4 figures
                 )
                 
                 results[band] = wave_results
@@ -1075,11 +1160,12 @@ def run_unified_analysis(lfp_processor, window_start: int, window_length: int,
     # Initialize unified analysis
     analyzer = UnifiedWaveAnalysis(lfp_processor, config)
     
-    # Run complete analysis
+    # Run complete analysis with output_dir
     results = analyzer.run_complete_analysis(
         window_start, window_length,
         optogenetic_intervals,
-        analyses_to_run=['all']
+        analyses_to_run=['all'],
+        output_dir=output_dir  # Pass it through
     )
     
     # Save results if output directory specified

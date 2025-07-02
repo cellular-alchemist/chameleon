@@ -8681,7 +8681,7 @@ class LFPDataProcessor:
             include_gradient=False,
             smoothing_factor=None,
             rescale_gradient=False,
-            revert_gradient=False,        # NEW: invert gradient vectors if True
+            revert_gradient=False,        # Invert gradient vectors if True
             x_neuron=None,
             y_neuron=None,
             neuron_labels=None,
@@ -8691,7 +8691,12 @@ class LFPDataProcessor:
             filename='animation.mp4',
             cmap=None,
             add_colorbar=True,
-            add_frame_number=False
+            add_frame_number=False,
+            save_frames=False,            # NEW: Whether to save individual frames
+            frame_dir=None,               # NEW: Directory for saving frames
+            frame_formats=['png', 'svg'], # NEW: Formats to save frames in
+            png_dpi=300,                  # NEW: DPI for PNG frames
+            skip_frame_interval=1         # NEW: Save every nth frame (1 = save all)
     ):
         """
         Create an LFP animation showing only a specified spatial region while performing
@@ -8735,6 +8740,16 @@ class LFPDataProcessor:
             Whether to add a colorbar
         add_frame_number : bool
             Whether to add frame number to the plot
+        save_frames : bool
+            Whether to save individual frames as images
+        frame_dir : str
+            Directory to save frames (if None, creates subfolder based on filename)
+        frame_formats : list
+            List of formats to save frames in (supported: 'png', 'svg')
+        png_dpi : int
+            DPI for PNG frame saves
+        skip_frame_interval : int
+            Save every nth frame (1 = save all frames)
         """
         import os
         import matplotlib.pyplot as plt
@@ -8775,6 +8790,24 @@ class LFPDataProcessor:
                         grad_y[:, :, t],
                         sigma=smoothing_factor
                     )
+
+        # Setup frame saving directory if requested
+        if save_frames:
+            if frame_dir is None:
+                # Create directory based on animation filename
+                base_name = os.path.splitext(os.path.basename(filename))[0]
+                frame_dir = os.path.join(os.path.dirname(filename), f"{base_name}_frames")
+            
+            # Create directory if it doesn't exist
+            os.makedirs(frame_dir, exist_ok=True)
+            print(f"Frames will be saved to: {frame_dir}")
+            
+            # Validate frame formats
+            valid_formats = ['png', 'svg']
+            frame_formats = [fmt.lower() for fmt in frame_formats if fmt.lower() in valid_formats]
+            if not frame_formats:
+                frame_formats = ['png']
+                print("No valid frame formats specified, defaulting to PNG")
 
         # Choose colormap
         if cmap is None:
@@ -8817,7 +8850,7 @@ class LFPDataProcessor:
             title_with_frame = f"{title}\nFrame {0}"
             title_obj = ax.set_title(title_with_frame, fontsize=14)
         else:
-            ax.set_title(title, fontsize=14)
+            title_obj = ax.set_title(title, fontsize=14)
 
         # Add colorbar
         if add_colorbar:
@@ -8921,6 +8954,24 @@ class LFPDataProcessor:
         ax.set_xticks(np.arange(0, x_max - x_min, 10))
         ax.set_yticks(np.arange(0, y_max - y_min, 10))
 
+        # Calculate total frames for padding
+        total_frames = final_frame - initial_frame
+        frame_digits = len(str(total_frames - 1))
+
+        def save_frame(frame_idx):
+            """Helper function to save current frame"""
+            frame_filename = f"frame_{frame_idx:0{frame_digits}d}"
+            
+            for fmt in frame_formats:
+                if fmt == 'png':
+                    save_path = os.path.join(frame_dir, f"{frame_filename}.png")
+                    fig.savefig(save_path, dpi=png_dpi, bbox_inches='tight', 
+                            facecolor=fig.get_facecolor(), edgecolor='none')
+                elif fmt == 'svg':
+                    save_path = os.path.join(frame_dir, f"{frame_filename}.svg")
+                    fig.savefig(save_path, format='svg', bbox_inches='tight',
+                            facecolor=fig.get_facecolor(), edgecolor='none')
+
         def update(frame):
             # Update heatmap
             im.set_array(filtered_matrices[y_min:y_max, x_min:x_max, frame])
@@ -8949,7 +9000,6 @@ class LFPDataProcessor:
             # Update frame number
             if add_frame_number:
                 title_obj.set_text(f"{title}\nFrame {frame}")
-                plot_elements.append(title_obj)
 
             # Update time display
             current_time = initial_time + ((initial_frame + frame) / self.fs)
@@ -8958,16 +9008,33 @@ class LFPDataProcessor:
             ms = int((current_time % 1) * 1000)
             time_text.set_text(f"Time: {m:02d}:{s:02d}.{ms:03d}")
 
+            # Save frame if requested
+            if save_frames and frame % skip_frame_interval == 0:
+                save_frame(frame)
+
             return plot_elements
 
+        # Save initial frame if requested
+        if save_frames:
+            save_frame(0)
+
         # Create and save the animation
+        print(f"Creating animation with {total_frames} frames...")
         anim = FuncAnimation(
             fig,
             update,
-            frames=final_frame - initial_frame,
+            frames=total_frames,
             interval=1000 / fps,
             blit=True
         )
+        
         writer = FFMpegWriter(fps=fps)
         anim.save(os.path.abspath(filename), writer=writer)
+        
+        if save_frames:
+            print(f"Animation and frames saved successfully!")
+            print(f"Frames location: {frame_dir}")
+        else:
+            print(f"Animation saved successfully!")
+        
         plt.close(fig)

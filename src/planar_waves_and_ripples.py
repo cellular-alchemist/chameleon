@@ -761,10 +761,10 @@ def analyze_planar_waves_and_ripples_optimized(
     verbose=True,
     figure_kwargs=None,
     swr_marker='line',
-    swr_waveform_window=0.05,
-    swr_waveform_height_scale=0.15,
-    swr_waveform_smoothing=1.5,
-    horizontal_scale_factor=0.5,
+    swr_waveform_window=0.1,
+    swr_waveform_height_scale=0.013,
+    swr_waveform_smoothing=0.01,
+    horizontal_scale_factor=0.2,
     waveform_colormap='cmc.hawaii'
 ):
     """
@@ -1011,7 +1011,7 @@ def analyze_planar_waves_and_ripples_optimized(
                 for ripple_time in window_ripples:
                     time_lag = ripple_time - event_time
                     plt.axvline(x=time_lag, color=colors['ripple_line'], 
-                               linestyle='-', alpha=0.6, linewidth=1.2)
+                               linestyle='-', alpha=0.6, linewidth=0.8)
             
             elif swr_marker == 'waveform':
                 # Extract and plot waveforms
@@ -1079,7 +1079,7 @@ def analyze_planar_waves_and_ripples_optimized(
                             waveform_color = cmap(norm(channel))
                             
                             plt.plot(wf_time_shifted, wf_data_positioned, 
-                                    color=waveform_color, linewidth=1.2, alpha=0.9)
+                                    color=waveform_color, linewidth=1, alpha=0.9)
                             
                             event_waveforms.append({
                                 'time': wf_time_shifted,
