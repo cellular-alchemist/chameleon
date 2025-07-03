@@ -3412,7 +3412,7 @@ class LFPDataProcessor:
         analytical_data = self._get_analytical_data(data_type, window_start, window_end)
         phase_data = analytical_data['phase']
         
-        # Initialize arrays for modulation index calculation
+        # Initialize arrays for modulation index calculation. test thosse
         time_points = np.arange(window_length)
         bins = np.linspace(-np.pi, np.pi, n_bins + 1)
         modulation_index = np.zeros(window_length)
